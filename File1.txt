@@ -1,11 +1,14 @@
+
 hELLO wORLd.
 
 
-added: some chnages.
+Added: some chnages.
 Change: to fix bug1.
 CHange: performed by teammate.
 
-added sehun some chnages.
+Added sehun some chnages.
 Change to fix bug1.
-Change 2:-> on remote master by team mate to test rebase with conflict CR2.
+Change 1:-> on remote master by team mate to test rebase with conflict CR2.
+
+Change 2: -> WI8 on local master to test conflict with remote master.
 
