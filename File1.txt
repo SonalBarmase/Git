@@ -1,10 +1,11 @@
-hELLO wORLd
+hELLO wORLd.
 
 
-added: some chnages
-Change: to fix bug1
-CHange: performed by teammate
+added: some chnages.
+Change: to fix bug1.
+CHange: performed by teammate.
 
-added sehun some chnages
-Change to fix bug1
+added sehun some chnages.
+Change to fix bug1.
+Change 2:-> on remote master by team mate to test rebase with conflict CR2.
 
