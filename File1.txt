@@ -1,4 +1,5 @@
 hELLO wORLd
 
-added some chnages
-Change to fix bug1
+added: some chnages
+Change: to fix bug1
+CHange: performed by teammate
