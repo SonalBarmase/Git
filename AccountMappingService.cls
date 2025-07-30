@@ -1,155 +1,214 @@
 public class AccountMappingService {
     
+    // Constants for field names - easier to maintain and modify
+    private static final String BRN_FIELD = 'BRN__c';
+    private static final String TAX_FIELD = 'Tax_Number__c';
+    private static final String ANCHOR_FIELD = 'Anchor_Tag__c';
+    
     /**
-     * Maps accounts with BRN/Tax Number to their corresponding anchor accounts
+     * Optimized method to map accounts with BRN/Tax Number to their anchor accounts
      * @param accountsWithBrnOrTax List of accounts that have BRN or Tax Number populated
      * @return Map<Id, Account> where key is the input account Id and value is the matched anchor account
      */
     public static Map<Id, Account> mapAccountsToAnchorAccounts(List<Account> accountsWithBrnOrTax) {
-        Map<Id, Account> accountMappingResult = new Map<Id, Account>();
-        
-        if (accountsWithBrnOrTax == null || accountsWithBrnOrTax.isEmpty()) {
-            return accountMappingResult;
+        // Early return for null/empty inputs
+        if (accountsWithBrnOrTax?.isEmpty() != false) {
+            return new Map<Id, Account>();
         }
         
-        // Collect all parent IDs and BRN/Tax Numbers for querying
+        // Single pass collection of all required data
         Set<Id> parentIds = new Set<Id>();
-        Set<String> brnNumbers = new Set<String>();
-        Set<String> taxNumbers = new Set<String>();
+        Set<String> identifiers = new Set<String>(); // Combined BRN and Tax numbers
+        Map<String, List<Account>> brnToAccounts = new Map<String, List<Account>>();
+        Map<String, List<Account>> taxToAccounts = new Map<String, List<Account>>();
         
         for (Account acc : accountsWithBrnOrTax) {
+            // Collect parent IDs
             if (acc.ParentId != null) {
                 parentIds.add(acc.ParentId);
             }
-            if (String.isNotBlank(acc.BRN__c)) { // Assuming BRN is a custom field
-                brnNumbers.add(acc.BRN__c);
-            }
-            if (String.isNotBlank(acc.Tax_Number__c)) { // Assuming Tax Number is a custom field
-                taxNumbers.add(acc.Tax_Number__c);
-            }
-        }
-        
-        // Query for anchor accounts that match the criteria
-        List<Account> anchorAccounts = queryAnchorAccounts(parentIds, brnNumbers, taxNumbers);
-        
-        // Create maps for efficient lookup
-        Map<String, Account> brnToAnchorAccount = new Map<String, Account>();
-        Map<String, Account> taxToAnchorAccount = new Map<String, Account>();
-        
-        for (Account anchorAcc : anchorAccounts) {
-            if (String.isNotBlank(anchorAcc.BRN__c)) {
-                brnToAnchorAccount.put(anchorAcc.BRN__c, anchorAcc);
-            }
-            if (String.isNotBlank(anchorAcc.Tax_Number__c)) {
-                taxToAnchorAccount.put(anchorAcc.Tax_Number__c, anchorAcc);
-            }
-        }
-        
-        // Map each input account to its corresponding anchor account
-        for (Account inputAccount : accountsWithBrnOrTax) {
-            Account matchedAnchorAccount = null;
             
-            // First try to match by BRN
-            if (String.isNotBlank(inputAccount.BRN__c) && brnToAnchorAccount.containsKey(inputAccount.BRN__c)) {
-                matchedAnchorAccount = brnToAnchorAccount.get(inputAccount.BRN__c);
-            }
-            // If no BRN match, try Tax Number
-            else if (String.isNotBlank(inputAccount.Tax_Number__c) && taxToAnchorAccount.containsKey(inputAccount.Tax_Number__c)) {
-                matchedAnchorAccount = taxToAnchorAccount.get(inputAccount.Tax_Number__c);
+            // Process BRN
+            if (String.isNotBlank(acc.BRN__c)) {
+                identifiers.add(acc.BRN__c);
+                if (!brnToAccounts.containsKey(acc.BRN__c)) {
+                    brnToAccounts.put(acc.BRN__c, new List<Account>());
+                }
+                brnToAccounts.get(acc.BRN__c).add(acc);
             }
             
-            if (matchedAnchorAccount != null) {
-                accountMappingResult.put(inputAccount.Id, matchedAnchorAccount);
+            // Process Tax Number
+            if (String.isNotBlank(acc.Tax_Number__c)) {
+                identifiers.add(acc.Tax_Number__c);
+                if (!taxToAccounts.containsKey(acc.Tax_Number__c)) {
+                    taxToAccounts.put(acc.Tax_Number__c, new List<Account>());
+                }
+                taxToAccounts.get(acc.Tax_Number__c).add(acc);
             }
         }
         
-        return accountMappingResult;
+        // Single optimized query for all anchor accounts
+        List<Account> anchorAccounts = queryAnchorAccountsOptimized(parentIds, identifiers);
+        
+        // Build result map efficiently
+        return buildAccountMapping(anchorAccounts, brnToAccounts, taxToAccounts);
     }
     
     /**
-     * Queries for anchor accounts based on the criteria
-     * @param parentIds Set of parent account IDs
-     * @param brnNumbers Set of BRN numbers to match
-     * @param taxNumbers Set of Tax numbers to match
-     * @return List<Account> of anchor accounts that match the criteria
+     * Optimized query method with single SOQL call
      */
-    private static List<Account> queryAnchorAccounts(Set<Id> parentIds, Set<String> brnNumbers, Set<String> taxNumbers) {
-        String query = 'SELECT Id, Name, ParentId, BRN__c, Tax_Number__c, Anchor_Tag__c ' +
-                       'FROM Account ' +
-                       'WHERE Anchor_Tag__c = true AND (';
-        
+    private static List<Account> queryAnchorAccountsOptimized(Set<Id> parentIds, Set<String> identifiers) {
+        // Build dynamic query conditions
         List<String> conditions = new List<String>();
         
-        // Add condition for accounts that are parents of input accounts
         if (!parentIds.isEmpty()) {
-            conditions.add('Id IN :parentIds');
+            conditions.add('(Id IN :parentIds OR ParentId IN :parentIds)');
         }
         
-        // Add condition for accounts that have the same parent as input accounts
-        if (!parentIds.isEmpty()) {
-            conditions.add('ParentId IN :parentIds');
+        if (!identifiers.isEmpty()) {
+            conditions.add('(' + BRN_FIELD + ' IN :identifiers OR ' + TAX_FIELD + ' IN :identifiers)');
         }
         
-        // Add condition for matching BRN or Tax Number
-        if (!brnNumbers.isEmpty() || !taxNumbers.isEmpty()) {
-            List<String> brnTaxConditions = new List<String>();
-            if (!brnNumbers.isEmpty()) {
-                brnTaxConditions.add('BRN__c IN :brnNumbers');
+        // Return empty list if no conditions
+        if (conditions.isEmpty()) {
+            return new List<Account>();
+        }
+        
+        String query = String.format(
+            'SELECT Id, Name, ParentId, {0}, {1}, {2} FROM Account WHERE {2} = true AND ({3})',
+            new List<String>{
+                BRN_FIELD, TAX_FIELD, ANCHOR_FIELD, String.join(conditions, ' OR ')
             }
-            if (!taxNumbers.isEmpty()) {
-                brnTaxConditions.add('Tax_Number__c IN :taxNumbers');
-            }
-            conditions.add('(' + String.join(brnTaxConditions, ' OR ') + ')');
-        }
-        
-        query += String.join(conditions, ' OR ') + ')';
+        );
         
         return Database.query(query);
     }
     
     /**
-     * Alternative method that returns a more detailed mapping result
-     * @param accountsWithBrnOrTax List of accounts that have BRN or Tax Number populated
-     * @return List<AccountMappingResult> containing detailed mapping information
+     * Efficiently builds the mapping between input accounts and anchor accounts
      */
-    public static List<AccountMappingResult> getDetailedAccountMapping(List<Account> accountsWithBrnOrTax) {
-        List<AccountMappingResult> results = new List<AccountMappingResult>();
-        Map<Id, Account> mappings = mapAccountsToAnchorAccounts(accountsWithBrnOrTax);
+    private static Map<Id, Account> buildAccountMapping(
+        List<Account> anchorAccounts,
+        Map<String, List<Account>> brnToAccounts,
+        Map<String, List<Account>> taxToAccounts
+    ) {
+        Map<Id, Account> result = new Map<Id, Account>();
         
-        for (Account inputAccount : accountsWithBrnOrTax) {
-            AccountMappingResult result = new AccountMappingResult();
-            result.inputAccount = inputAccount;
-            result.anchorAccount = mappings.get(inputAccount.Id);
-            result.matchedBy = determineMatchCriteria(inputAccount, result.anchorAccount);
-            results.add(result);
+        // Process each anchor account once
+        for (Account anchor : anchorAccounts) {
+            // Match by BRN (higher priority)
+            if (String.isNotBlank(anchor.BRN__c) && brnToAccounts.containsKey(anchor.BRN__c)) {
+                for (Account inputAccount : brnToAccounts.get(anchor.BRN__c)) {
+                    result.put(inputAccount.Id, anchor);
+                }
+            }
+            
+            // Match by Tax Number (only if not already matched by BRN)
+            if (String.isNotBlank(anchor.Tax_Number__c) && taxToAccounts.containsKey(anchor.Tax_Number__c)) {
+                for (Account inputAccount : taxToAccounts.get(anchor.Tax_Number__c)) {
+                    if (!result.containsKey(inputAccount.Id)) { // Prevent BRN override
+                        result.put(inputAccount.Id, anchor);
+                    }
+                }
+            }
         }
         
-        return results;
+        return result;
     }
     
     /**
-     * Determines how the accounts were matched
+     * Lightweight method for simple mapping without detailed results
+     * @param accountsWithBrnOrTax List of accounts to map
+     * @return Map<String, Id> where key is BRN/Tax and value is anchor account Id
      */
-    private static String determineMatchCriteria(Account inputAccount, Account anchorAccount) {
-        if (anchorAccount == null) {
-            return 'No Match';
+    public static Map<String, Id> getSimpleIdentifierMapping(List<Account> accountsWithBrnOrTax) {
+        if (accountsWithBrnOrTax?.isEmpty() != false) {
+            return new Map<String, Id>();
         }
         
-        if (String.isNotBlank(inputAccount.BRN__c) && inputAccount.BRN__c == anchorAccount.BRN__c) {
-            return 'BRN';
-        } else if (String.isNotBlank(inputAccount.Tax_Number__c) && inputAccount.Tax_Number__c == anchorAccount.Tax_Number__c) {
-            return 'Tax Number';
+        Set<String> identifiers = new Set<String>();
+        for (Account acc : accountsWithBrnOrTax) {
+            if (String.isNotBlank(acc.BRN__c)) identifiers.add(acc.BRN__c);
+            if (String.isNotBlank(acc.Tax_Number__c)) identifiers.add(acc.Tax_Number__c);
         }
         
-        return 'Unknown';
+        Map<String, Id> result = new Map<String, Id>();
+        if (!identifiers.isEmpty()) {
+            String query = String.format(
+                'SELECT Id, {0}, {1} FROM Account WHERE {2} = true AND ({0} IN :identifiers OR {1} IN :identifiers)',
+                new List<String>{BRN_FIELD, TAX_FIELD, ANCHOR_FIELD}
+            );
+            
+            for (Account anchor : Database.query(query)) {
+                if (String.isNotBlank(anchor.BRN__c)) result.put(anchor.BRN__c, anchor.Id);
+                if (String.isNotBlank(anchor.Tax_Number__c)) result.put(anchor.Tax_Number__c, anchor.Id);
+            }
+        }
+        
+        return result;
     }
     
     /**
-     * Wrapper class for detailed mapping results
+     * Batch processing method for large datasets
+     * @param accountsWithBrnOrTax Large list of accounts to process
+     * @param batchSize Number of accounts to process per batch (default: 200)
+     * @return Map<Id, Account> Complete mapping result
      */
-    public class AccountMappingResult {
-        public Account inputAccount { get; set; }
-        public Account anchorAccount { get; set; }
-        public String matchedBy { get; set; }
+    public static Map<Id, Account> mapAccountsBatch(List<Account> accountsWithBrnOrTax, Integer batchSize) {
+        if (accountsWithBrnOrTax?.isEmpty() != false) {
+            return new Map<Id, Account>();
+        }
+        
+        batchSize = batchSize ?? 200; // Default batch size
+        Map<Id, Account> finalResult = new Map<Id, Account>();
+        
+        for (Integer i = 0; i < accountsWithBrnOrTax.size(); i += batchSize) {
+            Integer endIndex = Math.min(i + batchSize, accountsWithBrnOrTax.size());
+            List<Account> batch = new List<Account>();
+            
+            for (Integer j = i; j < endIndex; j++) {
+                batch.add(accountsWithBrnOrTax[j]);
+            }
+            
+            Map<Id, Account> batchResult = mapAccountsToAnchorAccounts(batch);
+            finalResult.putAll(batchResult);
+        }
+        
+        return finalResult;
+    }
+    
+    /**
+     * Memory-efficient method that returns only account IDs
+     * @param accountsWithBrnOrTax List of accounts to map
+     * @return Map<Id, Id> where key is input account Id and value is anchor account Id
+     */
+    public static Map<Id, Id> mapAccountIds(List<Account> accountsWithBrnOrTax) {
+        Map<Id, Account> fullMapping = mapAccountsToAnchorAccounts(accountsWithBrnOrTax);
+        Map<Id, Id> idMapping = new Map<Id, Id>();
+        
+        for (Id inputId : fullMapping.keySet()) {
+            idMapping.put(inputId, fullMapping.get(inputId).Id);
+        }
+        
+        return idMapping;
+    }
+    
+    /**
+     * Utility method to validate input data
+     * @param accounts List of accounts to validate
+     * @return Boolean indicating if the data is valid for processing
+     */
+    public static Boolean isValidInput(List<Account> accounts) {
+        if (accounts?.isEmpty() != false) {
+            return false;
+        }
+        
+        for (Account acc : accounts) {
+            if (String.isNotBlank(acc.BRN__c) || String.isNotBlank(acc.Tax_Number__c)) {
+                return true; // At least one account has required data
+            }
+        }
+        
+        return false;
     }
 }
