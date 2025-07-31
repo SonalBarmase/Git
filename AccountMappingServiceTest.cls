@@ -3,154 +3,243 @@ public class AccountMappingServiceTest {
     
     @testSetup
     static void setupTestData() {
-        // Create anchor accounts efficiently
-        List<Account> anchorAccounts = new List<Account>{
+        // Create group accounts (parent accounts)
+        List<Account> groupAccounts = new List<Account>{
             new Account(
-                Name = 'Anchor Account 1',
-                Anchor_Tag__c = true,
-                BRN__c = 'BRN123456',
-                Tax_Number__c = 'TAX123456'
+                Name = 'Group Account 1',
+                Record_Type_Developer_Name__c = c.ACCOUNT_RT_GROUP_ACCOUNT,
+                Order_Form_Anchor__c = true,
+                Order_Form_Status__c = c.ORDER_FORM_COMPLETED,
+                Australian_Business_Number__c = 'ABN123456789',
+                Tax_Account_Number__c = 'TAX123456'
             ),
             new Account(
-                Name = 'Anchor Account 2', 
-                Anchor_Tag__c = true,
-                BRN__c = 'BRN789012',
-                Tax_Number__c = 'TAX789012'
-            ),
-            new Account(
-                Name = 'Parent Anchor',
-                Anchor_Tag__c = true,
-                BRN__c = 'BRN999999'
+                Name = 'Group Account 2',
+                Record_Type_Developer_Name__c = c.ACCOUNT_RT_GROUP_ACCOUNT,
+                Order_Form_Anchor__c = true,
+                Order_Form_Status__c = c.ORDER_FORM_COMPLETED,
+                Australian_Business_Number__c = 'ABN987654321',
+                Tax_Account_Number__c = 'TAX987654'
             )
         };
-        insert anchorAccounts;
+        insert groupAccounts;
         
-        // Create child accounts with various scenarios
-        List<Account> childAccounts = new List<Account>{
+        // Create anchor physical location accounts
+        List<Account> anchorPhysicalLocations = new List<Account>{
             new Account(
-                Name = 'Child with matching BRN',
-                ParentId = anchorAccounts[0].Id,
-                BRN__c = 'BRN123456',
-                Anchor_Tag__c = false
+                Name = 'Anchor Physical Location 1',
+                ParentId = groupAccounts[0].Id,
+                Record_Type_Developer_Name__c = c.ACCOUNT_RT_PHYSICAL_LOCATION,
+                Order_Form_Anchor__c = true,
+                Order_Form_Status__c = c.ORDER_FORM_COMPLETED,
+                Australian_Business_Number__c = 'ABN123456789',
+                Tax_Account_Number__c = 'TAX123456'
             ),
             new Account(
-                Name = 'Child with matching Tax',
-                ParentId = anchorAccounts[1].Id,
-                Tax_Number__c = 'TAX789012',
-                Anchor_Tag__c = false
-            ),
-            new Account(
-                Name = 'Child with both identifiers',
-                ParentId = anchorAccounts[2].Id,
-                BRN__c = 'BRN999999',
-                Tax_Number__c = 'TAX999999',
-                Anchor_Tag__c = false
-            ),
-            new Account(
-                Name = 'Sibling Account',
-                ParentId = anchorAccounts[0].Id,
-                BRN__c = 'BRN555555',
-                Anchor_Tag__c = false
+                Name = 'Anchor Physical Location 2',
+                ParentId = groupAccounts[1].Id,
+                Record_Type_Developer_Name__c = c.ACCOUNT_RT_PHYSICAL_LOCATION,
+                Order_Form_Anchor__c = true,
+                Order_Form_Status__c = c.ORDER_FORM_COMPLETED,
+                Australian_Business_Number__c = 'ABN987654321',
+                Tax_Account_Number__c = 'TAX987654'
             )
         };
-        insert childAccounts;
+        insert anchorPhysicalLocations;
+        
+        // Create regular physical location accounts (to be mapped)
+        List<Account> physicalLocations = new List<Account>{
+            new Account(
+                Name = 'Physical Location with ABN',
+                ParentId = groupAccounts[0].Id,
+                Record_Type_Developer_Name__c = c.ACCOUNT_RT_PHYSICAL_LOCATION,
+                Order_Form_Anchor__c = false,
+                Order_Form_Status__c = c.CLONE_ORDER_FORM,
+                Australian_Business_Number__c = 'ABN123456789'
+            ),
+            new Account(
+                Name = 'Physical Location with Tax',
+                ParentId = groupAccounts[1].Id,
+                Record_Type_Developer_Name__c = c.ACCOUNT_RT_PHYSICAL_LOCATION,
+                Order_Form_Anchor__c = false,
+                Order_Form_Status__c = c.CLONE_ORDER_FORM,
+                Tax_Account_Number__c = 'TAX987654'
+            ),
+            new Account(
+                Name = 'Physical Location with NA ABN',
+                ParentId = groupAccounts[0].Id,
+                Record_Type_Developer_Name__c = c.ACCOUNT_RT_PHYSICAL_LOCATION,
+                Order_Form_Anchor__c = false,
+                Order_Form_Status__c = c.CLONE_ORDER_FORM,
+                Australian_Business_Number__c = 'NA',
+                Tax_Account_Number__c = 'TAX123456'
+            )
+        };
+        insert physicalLocations;
     }
     
     @isTest
-    static void testOptimizedMapping() {
-        List<Account> inputAccounts = [
-            SELECT Id, Name, ParentId, BRN__c, Tax_Number__c 
+    static void testMapAccountsToAnchorAccounts() {
+        List<Account> physicalLocations = [
+            SELECT Id, Name, ParentId, Australian_Business_Number__c, Tax_Account_Number__c, 
+                   Order_Form_Status__c, Record_Type_Developer_Name__c
             FROM Account 
-            WHERE Anchor_Tag__c = false
+            WHERE Order_Form_Anchor__c = false
         ];
         
         Test.startTest();
-        Map<Id, Account> result = AccountMappingService.mapAccountsToAnchorAccounts(inputAccounts);
+        Map<Id, Account> result = AccountMappingService.mapAccountsToAnchorAccounts(
+            physicalLocations, 
+            c.ADDITIONAL_LOCATION
+        );
         Test.stopTest();
         
-        System.assertEquals(4, result.size(), 'All accounts should be mapped');
+        System.assertEquals(3, result.size(), 'All physical locations should be mapped');
         
         // Verify all mapped accounts are anchors
         for (Account anchor : result.values()) {
-            System.assertEquals(true, anchor.Anchor_Tag__c, 'Should map to anchor accounts only');
+            System.assertEquals(true, anchor.Order_Form_Anchor__c, 'Should map to anchor accounts only');
+            System.assertEquals(c.ORDER_FORM_COMPLETED, anchor.Order_Form_Status__c, 'Anchor should have completed status');
         }
     }
     
     @isTest
-    static void testSimpleIdentifierMapping() {
-        List<Account> inputAccounts = [
-            SELECT Id, BRN__c, Tax_Number__c 
+    static void testBuildGroupAnchorMap() {
+        List<Account> groupAccounts = [
+            SELECT Id FROM Account WHERE Record_Type_Developer_Name__c = :c.ACCOUNT_RT_GROUP_ACCOUNT
+        ];
+        
+        Set<Id> groupAccountIds = new Set<Id>();
+        for (Account acc : groupAccounts) {
+            groupAccountIds.add(acc.Id);
+        }
+        
+        Set<String> brnNumbers = new Set<String>{'ABN123456789', 'ABN987654321'};
+        Set<String> taxNumbers = new Set<String>{'TAX123456', 'TAX987654'};
+        
+        Test.startTest();
+        Map<Id, Set<String>> result = AccountMappingService.buildGroupAnchorMap(
+            groupAccountIds, 
+            brnNumbers, 
+            taxNumbers
+        );
+        Test.stopTest();
+        
+        System.assert(!result.isEmpty(), 'Should return group anchor mappings');
+        
+        // Verify the structure
+        for (Id groupId : result.keySet()) {
+            Set<String> identifiers = result.get(groupId);
+            System.assert(!identifiers.isEmpty(), 'Each group should have identifiers');
+        }
+    }
+    
+    @isTest
+    static void testGetGroupAnchorMapping() {
+        List<Account> physicalLocations = [
+            SELECT Id, Name, ParentId, Australian_Business_Number__c, Tax_Account_Number__c, 
+                   Order_Form_Status__c, Record_Type_Developer_Name__c
             FROM Account 
-            WHERE Anchor_Tag__c = false
+            WHERE Order_Form_Anchor__c = false
         ];
         
         Test.startTest();
-        Map<String, Id> result = AccountMappingService.getSimpleIdentifierMapping(inputAccounts);
+        Map<Id, Set<String>> result = AccountMappingService.getGroupAnchorMapping(
+            physicalLocations, 
+            c.ADDITIONAL_LOCATION
+        );
         Test.stopTest();
         
-        System.assert(!result.isEmpty(), 'Should return identifier mappings');
-        System.assert(result.containsKey('BRN123456'), 'Should contain BRN mapping');
+        System.assert(!result.isEmpty(), 'Should return group mappings');
+    }
+    
+    @isTest
+    static void testGetAnchorAccountByIdentifier() {
+        List<Account> groupAccounts = [
+            SELECT Id FROM Account WHERE Record_Type_Developer_Name__c = :c.ACCOUNT_RT_GROUP_ACCOUNT
+        ];
+        
+        Set<Id> groupAccountIds = new Set<Id>();
+        for (Account acc : groupAccounts) {
+            groupAccountIds.add(acc.Id);
+        }
+        
+        Test.startTest();
+        Account result = AccountMappingService.getAnchorAccountByIdentifier(
+            'ABN123456789', 
+            groupAccountIds
+        );
+        Test.stopTest();
+        
+        System.assertNotEquals(null, result, 'Should find anchor account by ABN');
+        System.assertEquals('ABN123456789', result.Australian_Business_Number__c, 'Should match the ABN');
     }
     
     @isTest
     static void testBatchProcessing() {
-        List<Account> inputAccounts = [
-            SELECT Id, Name, ParentId, BRN__c, Tax_Number__c 
+        List<Account> physicalLocations = [
+            SELECT Id, Name, ParentId, Australian_Business_Number__c, Tax_Account_Number__c, 
+                   Order_Form_Status__c, Record_Type_Developer_Name__c
             FROM Account 
-            WHERE Anchor_Tag__c = false
+            WHERE Order_Form_Anchor__c = false
         ];
         
         Test.startTest();
-        Map<Id, Account> result = AccountMappingService.mapAccountsBatch(inputAccounts, 2);
+        Map<Id, Account> result = AccountMappingService.mapAccountsBatch(
+            physicalLocations, 
+            c.ADDITIONAL_LOCATION, 
+            2
+        );
         Test.stopTest();
         
-        System.assertEquals(4, result.size(), 'Batch processing should return same results');
+        System.assertEquals(3, result.size(), 'Batch processing should return same results');
     }
     
     @isTest
-    static void testIdOnlyMapping() {
-        List<Account> inputAccounts = [
-            SELECT Id, Name, ParentId, BRN__c, Tax_Number__c 
-            FROM Account 
-            WHERE Anchor_Tag__c = false
-        ];
+    static void testBrnPriorityOverTax() {
+        // Create test data with overlapping identifiers
+        Account groupAccount = new Account(
+            Name = 'Test Group Account',
+            Record_Type_Developer_Name__c = c.ACCOUNT_RT_GROUP_ACCOUNT,
+            Order_Form_Anchor__c = true,
+            Order_Form_Status__c = c.ORDER_FORM_COMPLETED,
+            Australian_Business_Number__c = 'OVERLAP123',
+            Tax_Account_Number__c = 'OVERLAP456'
+        );
+        insert groupAccount;
+        
+        Account anchorLocation = new Account(
+            Name = 'Anchor Location',
+            ParentId = groupAccount.Id,
+            Record_Type_Developer_Name__c = c.ACCOUNT_RT_PHYSICAL_LOCATION,
+            Order_Form_Anchor__c = true,
+            Order_Form_Status__c = c.ORDER_FORM_COMPLETED,
+            Australian_Business_Number__c = 'OVERLAP123',
+            Tax_Account_Number__c = 'OVERLAP456'
+        );
+        insert anchorLocation;
+        
+        Account testLocation = new Account(
+            Name = 'Test Location',
+            ParentId = groupAccount.Id,
+            Record_Type_Developer_Name__c = c.ACCOUNT_RT_PHYSICAL_LOCATION,
+            Order_Form_Anchor__c = false,
+            Order_Form_Status__c = c.CLONE_ORDER_FORM,
+            Australian_Business_Number__c = 'OVERLAP123',
+            Tax_Account_Number__c = 'DIFFERENT789'
+        );
+        insert testLocation;
         
         Test.startTest();
-        Map<Id, Id> result = AccountMappingService.mapAccountIds(inputAccounts);
+        Map<Id, Account> result = AccountMappingService.mapAccountsToAnchorAccounts(
+            new List<Account>{testLocation}, 
+            c.ADDITIONAL_LOCATION
+        );
         Test.stopTest();
         
-        System.assertEquals(4, result.size(), 'Should return ID mappings');
-        
-        // Verify IDs are valid
-        for (Id anchorId : result.values()) {
-            System.assertNotEquals(null, anchorId, 'Anchor ID should not be null');
-        }
-    }
-    
-    @isTest
-    static void testInputValidation() {
-        List<Account> validAccounts = [
-            SELECT Id, BRN__c, Tax_Number__c 
-            FROM Account 
-            WHERE Anchor_Tag__c = false 
-            LIMIT 1
-        ];
-        
-        List<Account> invalidAccounts = new List<Account>{
-            new Account(Name = 'No Identifiers')
-        ];
-        
-        Test.startTest();
-        Boolean validResult = AccountMappingService.isValidInput(validAccounts);
-        Boolean invalidResult = AccountMappingService.isValidInput(invalidAccounts);
-        Boolean nullResult = AccountMappingService.isValidInput(null);
-        Boolean emptyResult = AccountMappingService.isValidInput(new List<Account>());
-        Test.stopTest();
-        
-        System.assertEquals(true, validResult, 'Should validate accounts with identifiers');
-        System.assertEquals(false, invalidResult, 'Should reject accounts without identifiers');
-        System.assertEquals(false, nullResult, 'Should handle null input');
-        System.assertEquals(false, emptyResult, 'Should handle empty input');
+        System.assertEquals(1, result.size(), 'Should map the account');
+        Account mappedAnchor = result.get(testLocation.Id);
+        System.assertEquals('OVERLAP123', mappedAnchor.Australian_Business_Number__c, 'Should match by ABN priority');
     }
     
     @isTest
@@ -158,128 +247,122 @@ public class AccountMappingServiceTest {
         Test.startTest();
         
         // Test null input
-        Map<Id, Account> nullResult = AccountMappingService.mapAccountsToAnchorAccounts(null);
+        Map<Id, Account> nullResult = AccountMappingService.mapAccountsToAnchorAccounts(null, c.ADDITIONAL_LOCATION);
         System.assertEquals(0, nullResult.size(), 'Should handle null input gracefully');
         
         // Test empty input
-        Map<Id, Account> emptyResult = AccountMappingService.mapAccountsToAnchorAccounts(new List<Account>());
+        Map<Id, Account> emptyResult = AccountMappingService.mapAccountsToAnchorAccounts(
+            new List<Account>(), 
+            c.ADDITIONAL_LOCATION
+        );
         System.assertEquals(0, emptyResult.size(), 'Should handle empty input gracefully');
         
-        // Test accounts without identifiers
-        List<Account> noIdentifiers = new List<Account>{
-            new Account(Name = 'Test Account', Anchor_Tag__c = false)
+        // Test accounts without matching criteria
+        List<Account> noMatchAccounts = new List<Account>{
+            new Account(
+                Name = 'No Match Account', 
+                Order_Form_Status__c = c.ORDER_FORM_COMPLETED, // Different status
+                Record_Type_Developer_Name__c = c.ACCOUNT_RT_PHYSICAL_LOCATION
+            )
         };
-        Map<Id, Account> noIdResult = AccountMappingService.mapAccountsToAnchorAccounts(noIdentifiers);
-        System.assertEquals(0, noIdResult.size(), 'Should handle accounts without identifiers');
+        Map<Id, Account> noMatchResult = AccountMappingService.mapAccountsToAnchorAccounts(
+            noMatchAccounts, 
+            c.ADDITIONAL_LOCATION
+        );
+        System.assertEquals(0, noMatchResult.size(), 'Should handle accounts without matching criteria');
         
         Test.stopTest();
     }
     
     @isTest
-    static void testBrnPriorityOverTax() {
-        // Create test data with overlapping identifiers
-        Account anchorWithBoth = new Account(
-            Name = 'Anchor with Both',
-            Anchor_Tag__c = true,
-            BRN__c = 'OVERLAP123',
-            Tax_Number__c = 'OVERLAP456'
-        );
-        insert anchorWithBoth;
-        
-        Account testAccount = new Account(
-            Name = 'Test Account',
-            BRN__c = 'OVERLAP123',
-            Tax_Number__c = 'DIFFERENT789',
-            Anchor_Tag__c = false
-        );
-        insert testAccount;
+    static void testNaAbnHandling() {
+        // Test that 'NA' ABN values are properly handled and Tax Number is used instead
+        List<Account> physicalLocations = [
+            SELECT Id, Name, ParentId, Australian_Business_Number__c, Tax_Account_Number__c, 
+                   Order_Form_Status__c, Record_Type_Developer_Name__c
+            FROM Account 
+            WHERE Order_Form_Anchor__c = false 
+            AND Australian_Business_Number__c = 'NA'
+        ];
         
         Test.startTest();
-        Map<Id, Account> result = AccountMappingService.mapAccountsToAnchorAccounts(new List<Account>{testAccount});
+        Map<Id, Account> result = AccountMappingService.mapAccountsToAnchorAccounts(
+            physicalLocations, 
+            c.ADDITIONAL_LOCATION
+        );
         Test.stopTest();
         
-        System.assertEquals(1, result.size(), 'Should map the account');
-        System.assertEquals(anchorWithBoth.Id, result.get(testAccount.Id).Id, 'Should match by BRN priority');
+        // Should map using Tax Number since ABN is 'NA'
+        System.assertEquals(1, result.size(), 'Should map account using Tax Number when ABN is NA');
+        
+        Account mappedAnchor = result.values()[0];
+        System.assertEquals('TAX123456', mappedAnchor.Tax_Account_Number__c, 'Should match by Tax Number');
     }
 }
 
 /**
- * Optimized usage example with performance considerations
+ * Usage example class showing how to implement the optimized AccountMappingService
  */
 public class OptimizedAccountMappingExample {
     
     /**
-     * High-performance account mapping for large datasets
+     * Example of processing physical locations for additional location opportunities
      */
-    public static void processLargeDataset() {
-        // Step 1: Validate input before processing
-        List<Account> accounts = [
-            SELECT Id, Name, ParentId, BRN__c, Tax_Number__c
-            FROM Account 
-            WHERE (BRN__c != null OR Tax_Number__c != null)
-            AND Anchor_Tag__c = false
-            LIMIT 10000
-        ];
-        
-        if (!AccountMappingService.isValidInput(accounts)) {
-            System.debug('No valid accounts to process');
+    public static void processAdditionalLocationOpportunities(List<Account> physicalLocations) {
+        if (physicalLocations?.isEmpty() != false) {
+            System.debug('No physical locations to process');
             return;
         }
         
-        // Step 2: Use batch processing for large datasets
-        Map<Id, Account> mappings = accounts.size() > 200 
-            ? AccountMappingService.mapAccountsBatch(accounts, 200)
-            : AccountMappingService.mapAccountsToAnchorAccounts(accounts);
+        // Use the optimized mapping service
+        Map<Id, Account> anchorMapping = AccountMappingService.mapAccountsToAnchorAccounts(
+            physicalLocations, 
+            c.ADDITIONAL_LOCATION
+        );
         
-        // Step 3: Process results efficiently
-        System.debug('Processed ' + accounts.size() + ' accounts, mapped ' + mappings.size());
+        System.debug('Mapped ' + anchorMapping.size() + ' physical locations to anchor accounts');
         
-        // For memory-efficient processing, use ID-only mapping
-        if (mappings.size() > 1000) {
-            Map<Id, Id> idMappings = AccountMappingService.mapAccountIds(accounts);
-            // Process with IDs only to save memory
-            processWithIds(idMappings);
-        } else {
-            // Process with full account objects for smaller datasets
-            processWithFullObjects(mappings);
-        }
-    }
-    
-    /**
-     * Memory-efficient processing with IDs only
-     */
-    private static void processWithIds(Map<Id, Id> idMappings) {
-        // Batch update or other operations using only IDs
-        System.debug('Processing ' + idMappings.size() + ' ID mappings efficiently');
-    }
-    
-    /**
-     * Full object processing for smaller datasets
-     */
-    private static void processWithFullObjects(Map<Id, Account> mappings) {
-        for (Id inputId : mappings.keySet()) {
-            Account anchor = mappings.get(inputId);
-            System.debug('Input: ' + inputId + ' -> Anchor: ' + anchor.Name);
-        }
-    }
-    
-    /**
-     * Quick identifier lookup without full mapping
-     */
-    public static void quickIdentifierLookup(List<Account> accounts) {
-        Map<String, Id> identifierMap = AccountMappingService.getSimpleIdentifierMapping(accounts);
-        
-        for (Account acc : accounts) {
-            Id anchorId = null;
-            if (String.isNotBlank(acc.BRN__c)) {
-                anchorId = identifierMap.get(acc.BRN__c);
-            } else if (String.isNotBlank(acc.Tax_Number__c)) {
-                anchorId = identifierMap.get(acc.Tax_Number__c);
-            }
+        // Process the mappings
+        for (Id locationId : anchorMapping.keySet()) {
+            Account anchorAccount = anchorMapping.get(locationId);
+            System.debug('Location ' + locationId + ' mapped to anchor: ' + anchorAccount.Name);
             
-            if (anchorId != null) {
-                System.debug('Account ' + acc.Name + ' maps to anchor: ' + anchorId);
-            }
+            // Additional processing logic here
+            // For example: create opportunities, update records, etc.
         }
+    }
+    
+    /**
+     * Example of using the group anchor mapping for complex scenarios
+     */
+    public static void processGroupAnchorMappings(List<Account> physicalLocations) {
+        Map<Id, Set<String>> groupMappings = AccountMappingService.getGroupAnchorMapping(
+            physicalLocations, 
+            c.ADDITIONAL_LOCATION
+        );
+        
+        for (Id groupId : groupMappings.keySet()) {
+            Set<String> identifiers = groupMappings.get(groupId);
+            System.debug('Group ' + groupId + ' has identifiers: ' + String.join(new List<String>(identifiers), ', '));
+        }
+    }
+    
+    /**
+     * Example of batch processing for large datasets
+     */
+    public static void processBulkPhysicalLocations(List<Account> largeDataset) {
+        // Use batch processing for large datasets
+        Map<Id, Account> mappings = largeDataset.size() > 200 
+            ? AccountMappingService.mapAccountsBatch(largeDataset, c.ADDITIONAL_LOCATION, 200)
+            : AccountMappingService.mapAccountsToAnchorAccounts(largeDataset, c.ADDITIONAL_LOCATION);
+        
+        System.debug('Processed ' + largeDataset.size() + ' records, mapped ' + mappings.size());
+    }
+    
+    /**
+     * Example of finding specific anchor account by identifier
+     */
+    public static Account findAnchorByIdentifier(String identifier, Set<Id> groupIds) {
+        return AccountMappingService.getAnchorAccountByIdentifier(identifier, groupIds);
     }
 }
